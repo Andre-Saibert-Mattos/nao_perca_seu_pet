@@ -13,8 +13,9 @@
 #define DIO0 26
 
 //=====================Variaveis configuraveis=====================
-//frequencia lora
-#define BAND 915E6
+#define BAND 915E6  //frequencia lora
+#define MAC_PET "[24:62:AB:DD:D0:68]" //define MAC do PET para comparar com o endereço recebido via LoRa
+#define MAC_Servidor "[CC:50:E3:81:9D:24]" //define MAC do Servidor para usar no protocolo de comunicação LoRa
 
 int temp_Env_Lora=8000; //tempo em millis, envio de pacotes via LoRa
 int temp_Cap_GPS=1000; //tempo em millis, captura de dados GPS
@@ -53,6 +54,8 @@ void Dados_GPS(){
 void LoRaEnviaDados(){
   if(millis()-tempo>temp_Env_Lora){
     tempo=millis();
+    DadosGPS = MAC_Servidor+DadosGPS;   //adiciona o endereço MAC do Servidor no inicio do pacote com dados do GPS
+    Serial.print("Pacote Enviado: "); Serial.println(DadosGPS);
     //Enviando pacote LoRa para o receptor
     LoRa.beginPacket();
     LoRa.print(DadosGPS);
@@ -60,7 +63,16 @@ void LoRaEnviaDados(){
   }
 }
 
-//===========================================================================================================
+bool validaMAC(String* LoRaDados){
+  int index1 = LoRaDados->indexOf('[');
+  int index2 = LoRaDados->indexOf(']')+1;
+  String MAC = LoRaDados->substring(index1, index2);
+  if(MAC == MAC_PET){
+    *LoRaDados = LoRaDados->substring(index2);
+    return true;
+  }else return false;
+}
+
 void LoRaRecebeDados(){
   //recebe o pacote LoRa
   int packetSize = LoRa.parsePacket();
@@ -71,23 +83,23 @@ void LoRaRecebeDados(){
     while (LoRa.available())
       LoRaDados = LoRa.readString();
 
-    char LoRaDados_char[LoRaDados.length()+1];
-    LoRaDados.toCharArray(LoRaDados_char, LoRaDados.length()+1);
+    //escreve o pacote no serial
+    Serial.print("Pacote Recebido: ");Serial.println(LoRaDados);
 
-    for(int i=0; i<LoRaDados.length()+1; i++){
-      if((LoRaDados_char[i]=='T') || (LoRaDados_char[i]=='F')){
-        //recebeu um pacote
-        Serial.println("Pacote Recebido: ");
-        //escreve o pacote no serial
-        Serial.println(LoRaDados_char[i]);
-    
-        switch(LoRaDados_char[i]){
-          case 'T':
-            temp_Env_Lora=2000;
-            break;
-          case 'F':
-            temp_Env_Lora=8000;
-            break;
+    if(validaMAC(&LoRaDados)){
+      char LoRaDados_char[LoRaDados.length()+1];
+      LoRaDados.toCharArray(LoRaDados_char, LoRaDados.length()+1);
+  
+      for(int i=0; i<LoRaDados.length()+1; i++){
+        if((LoRaDados_char[i]=='T') || (LoRaDados_char[i]=='F')){
+          switch(LoRaDados_char[i]){
+            case 'T':
+              temp_Env_Lora=2000;
+              break;
+            case 'F':
+              temp_Env_Lora=8000;
+              break;
+          }
         }
       }
     }
