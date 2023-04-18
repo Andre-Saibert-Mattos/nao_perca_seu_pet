@@ -25,27 +25,31 @@
 #define RST 14  
 #define DIO0 26 
 
-//define banda LoRa
-#define BAND 915E6
+//===========================================================================================================
+#define BAND 915E6  //define banda LoRa
+#define MAC_PET "[24:62:AB:DD:D0:68]" //define MAC do PET para usar no protocolo de comunicação LoRa
+#define MAC_Servidor "[CC:50:E3:81:9D:24]" //define MAC do Servidor para comparar com o endereço recebido via LoRa
 
+//===========================================================================================================
 //define o tamanho maximo do pacote bluetooth, quantidade de caracteres
 #define tamPacoteBt 24
 
+//===========================================================================================================
 //define configurações do buzzer
 #define pinoBuzzer 25
 #define canalBuzzer 0
 
 //variaveis para acionamento do buzzer
 bool acionaBuzzer=false;
+bool aapDesligaBuzzer=false;
 int timerBuzzer=0;
 
+//===========================================================================================================
 // pacotes de dados
 String LoRaDados;
 String aux_LoRaEnviaDados="";
 
-char BtDadosEnvia[tamPacoteBt];
-String BtDadosRecebe;
-
+//===========================================================================================================
 //inicia a variavel que tratara o bluetooth
 BluetoothSerial SerialBT;
 
@@ -156,12 +160,23 @@ double distancia(){
 void LoRaEnviaDados(String envio){
   if(envio!=aux_LoRaEnviaDados){
     aux_LoRaEnviaDados=envio;
+    envio = MAC_PET+envio;   //adiciona o endereço MAC do PET no inicio do pacote LoRa
     Serial.print("Pacote Enviado: "); Serial.println(envio);
     //Enviando pacote LoRa para o receptor
     LoRa.beginPacket();
     LoRa.print(envio);
     LoRa.endPacket();
   }
+}
+
+bool validaMAC(String* LoRaDados){
+  int index1 = LoRaDados->indexOf('[');
+  int index2 = LoRaDados->indexOf(']')+1;
+  String MAC = LoRaDados->substring(index1, index2);
+  if(MAC == MAC_Servidor){
+    *LoRaDados = LoRaDados->substring(index2);
+    return true;
+  }else return false;
 }
 
 void LoRaRecebeDados(){
@@ -174,65 +189,71 @@ void LoRaRecebeDados(){
     while (LoRa.available())
       LoRaDados = LoRa.readString();
 
-    //recebeu um pacote
-    Serial.print("Pacote Recebido: ");
     //escreve o pacote no serial
-    Serial.println(LoRaDados);
-      
-    //monta o pacote bluetooth
-    LoRaDados.toCharArray(BtDadosEnvia, tamPacoteBt);
-    
-    //envia o pacote
-    for(int i=0; i<tamPacoteBt; i++)
-      SerialBT.write(BtDadosEnvia[i]);
+    Serial.print("Pacote Recebido: ");Serial.println(LoRaDados);
 
-    //======checagem zona segura======
-    String rsLoRaDados[2];
-    splitString(LoRaDados, rsLoRaDados);
-    if((rsLoRaDados[0].toDouble()!=0.0) && (rsLoRaDados[1].toDouble()!=0.0)){
-      String rEEPROM[3];
-      String rsEEPROM = lerEEPROM();
-      if(rsEEPROM!="E"){
-        splitString(rsEEPROM, rEEPROM);
+    if(validaMAC(&LoRaDados)){
+      char BtDadosEnvia[tamPacoteBt];
+      //monta o pacote bluetooth
+      LoRaDados.toCharArray(BtDadosEnvia, tamPacoteBt);
       
-        if(distancia()>(rEEPROM[2].toDouble()+3)){
-          acionaBuzzer=true;
-          LoRaEnviaDados(":T,");
-          Serial.println("Pet fora da zona segura");
-        }else{
-          acionaBuzzer=false;
-          LoRaEnviaDados(":F,");
-          Serial.println("Pet dentro da zona segura");
+      //======checagem zona segura======
+      String rsLoRaDados[2];
+      splitString(LoRaDados, rsLoRaDados);
+      if((rsLoRaDados[0].toDouble()!=0.0) && (rsLoRaDados[1].toDouble()!=0.0)){
+        //envia o pacote bluetooth
+        BTEnviaDados(BtDadosEnvia, tamPacoteBt);
+        
+        String rEEPROM[3];
+        String rsEEPROM = lerEEPROM();
+        if(rsEEPROM!="E"){
+          splitString(rsEEPROM, rEEPROM);
+        
+          if(distancia()>(rEEPROM[2].toDouble()+3)){
+            if(!aapDesligaBuzzer) acionaBuzzer=true;
+            LoRaEnviaDados(":T,");
+            Serial.println("Pet fora da zona segura");
+          }else{
+            aapDesligaBuzzer=false;
+            acionaBuzzer=false;
+            LoRaEnviaDados(":F,");
+            Serial.println("Pet dentro da zona segura");
+          }
         }
-      }
-    }else acionaBuzzer=false;
+      }else acionaBuzzer=false;
+    }
   }
 }
 
 //===========================================================================================================
+void BTEnviaDados(char* pacote, int tamanho){
+  //envia o pacote
+  for(int i=0; i<tamanho; i++)
+    SerialBT.write(pacote[i]);
+}
+
 void BtRecebeDados(){
   //recebe dados enviados pelo app via bluetooth
-  BtDadosRecebe="";
+  String BtDadosRecebe="";
   while(SerialBT.available())
     BtDadosRecebe+=(char)SerialBT.read();
-  if((BtDadosRecebe!="") && (BtDadosRecebe.length()>=minPac) && (BtDadosRecebe.length()<=maxPac)){
-    //cria uma array de char com o tamanho da String
-    char string[BtDadosRecebe.length()];
-    //transcreve a String dentro da array de char
-    BtDadosRecebe.toCharArray(string, BtDadosRecebe.length()+1);
-    //escreve a array de char na memoria
-    writeEEPROM(disk1, address, string, sizeof(string));
-  }else if((BtDadosRecebe!="") && (BtDadosRecebe=="1_init")){
-    String dadosEEPROM = lerEEPROM();
-    if(dadosEEPROM!="E"){
-      char BtEnviaEEPROM[dadosEEPROM.length()+1];
+  if(BtDadosRecebe!=""){
+    if((BtDadosRecebe.length()>=minPac) && (BtDadosRecebe.length()<=maxPac)){
+      char string[BtDadosRecebe.length()];    //cria uma array de char com o tamanho da String
+      BtDadosRecebe.toCharArray(string, BtDadosRecebe.length()+1);    //transcreve a String dentro da array de char
+      writeEEPROM(disk1, address, string, sizeof(string));    //escreve a array de char na memoria
+    }else if(BtDadosRecebe=="1_init"){
+      String dadosEEPROM = lerEEPROM();
+      if(dadosEEPROM!="E"){
+        char BtEnviaEEPROM[dadosEEPROM.length()+1];
+        dadosEEPROM.toCharArray(BtEnviaEEPROM, dadosEEPROM.length()+1);  //monta o pacote bluetooth
   
-      //monta o pacote bluetooth
-      dadosEEPROM.toCharArray(BtEnviaEEPROM, dadosEEPROM.length()+1);
-
-      //envia o pacote
-      for(int i=0; i<dadosEEPROM.length()+1; i++)
-        SerialBT.write(BtEnviaEEPROM[i]);
+        //envia o pacote
+        BTEnviaDados(BtEnviaEEPROM, dadosEEPROM.length()+1);
+      }
+    }else if(BtDadosRecebe=="S_off"){
+      aapDesligaBuzzer=true;
+      acionaBuzzer=false;
     }
   }
 }
